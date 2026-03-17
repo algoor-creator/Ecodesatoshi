@@ -1233,4 +1233,21 @@ transform: translateY(0);
 
 <footer>
   <p class="footer-tagline">Soberanía financiera empieza con conocimiento.</p>
-  <p>© 2026 Eco de Satoshi Publishing · 
+  <p>© 2026 Eco de Satoshi Publishing · Todos los derechos reservados</p>
+</footer>
+
+<script>
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
