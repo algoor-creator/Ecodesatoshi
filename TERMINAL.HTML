@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Arb Terminal | Eco de Satoshi</title>
+<meta name="description" content="Paper trading terminal para mercados de prediccion. Practica con datos reales de Polymarket sin riesgo.">
+<meta property="og:title" content="Arb Terminal | Eco de Satoshi">
+<meta property="og:description" content="Paper trading en mercados de prediccion con datos reales de Polymarket">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0b0e;color:#e4e4e7;font-family:'Inter',-apple-system,sans-serif;overflow:hidden;height:100vh;height:100dvh}
+#root{height:100%;display:flex;flex-direction:column}
+.mono{font-family:'JetBrains Mono',monospace}
+.hsb::-webkit-scrollbar{display:none}.hsb{scrollbar-width:none;-ms-overflow-style:none}
+.rh:hover{background:rgba(255,255,255,0.03)}
+.text-green-400{color:#4ade80}.text-red-400{color:#f87171}
+@keyframes pu{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .3s ease-out}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback} = React;
+const GAMMA = "https://gamma-api.polymarket.com";
+
+const FB = [
+  {id:"fb1",question:"Bitcoin above $120K by July 2026?",category:"Crypto",yes:0.42,volume:2847000,slug:"",url:""},
+  {id:"fb2",question:"Fed rate cut in May 2026?",category:"Economics",yes:0.35,volume:5420000,slug:"",url:""},
+  {id:"fb3",question:"S&P 500 above 6500 end of Q2?",category:"Markets",yes:0.55,volume:4200000,slug:"",url:""},
+  {id:"fb4",question:"Ethereum above $6K by June 2026?",category:"Crypto",yes:0.28,volume:1203000,slug:"",url:""},
+  {id:"fb5",question:"Trump approval above 50% by April?",category:"Politics",yes:0.22,volume:3100000,slug:"",url:""},
+  {id:"fb6",question:"Solana above $300 by May?",category:"Crypto",yes:0.31,volume:980000,slug:"",url:""},
+  {id:"fb7",question:"US recession declared in 2026?",category:"Economics",yes:0.18,volume:6700000,slug:"",url:""},
+  {id:"fb8",question:"Gold above $3,500/oz by June?",category:"Markets",yes:0.48,volume:1560000,slug:"",url:""},
+  {id:"fb9",question:"EU AI Act enforcement begins Q2?",category:"Tech",yes:0.72,volume:890000,slug:"",url:""},
+  {id:"fb10",question:"Argentina inflation below 50% Dec?",category:"Economics",yes:0.38,volume:450000,slug:"",url:""},
+];
+
+function pp(m){try{if(m.outcomePrices){const p=typeof m.outcomePrices==="string"?JSON.parse(m.outcomePrices):m.outcomePrices;if(p&&p.length>=1)return parseFloat(p[0])}if(m.bestAsk)return parseFloat(m.bestAsk);if(m.lastTradePrice)return parseFloat(m.lastTradePrice)}catch(e){}return null}
+function fu(n){return "$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fv(n){return n>=1e6?"$"+(n/1e6).toFixed(1)+"M":n>=1e3?"$"+(n/1e3).toFixed(0)+"K":"$"+n.toFixed(0)}
+function rw(p,v){return Math.max(0.01,Math.min(0.99,p+(Math.random()-0.5)*2*(v||0.006)))}
+
+function cat(m){
+  const q=(m.question||"").toLowerCase();
+  const tg=(m.tags||[]).map(t=>(typeof t==="string"?t:t.label||"").toLowerCase()).join(" ");
+  const s=q+" "+tg;
+  if(/bitcoin|ethereum|btc|eth|crypto|solana|token|defi|usdt|usdc|cardano|polkadot/.test(s))return "Crypto";
+  if(/trump|election|president|congress|senat|politic|vote|governor|parliament/.test(s))return "Politics";
+  if(/fed |inflation|gdp|recession|rate cut|unemployment|cpi|tariff|trade war/.test(s))return "Economics";
+  if(/s.p.500|stock|gold|nasdaq|dow|market|oil|treasury|bond/.test(s))return "Markets";
+  if(/\bai\b|tech|apple|google|spacex|nvidia|openai|meta |microsoft|robot/.test(s))return "Tech";
+  if(/nba|nfl|soccer|sport|fifa|tennis|f1|ufc|mma|boxing|mlb|nhl/.test(s))return "Sports";
+  return "Other";
+}
+
+function Spark({data}){
+  if(!data||data.length<2)return null;
+  const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||0.01;
+  const up=data[data.length-1]>=data[0];
+  const pts=data.map((v,i)=>((i/(data.length-1))*72)+","+(24-((v-mn)/rng)*24)).join(" ");
+  return React.createElement("svg",{width:72,height:24},React.createElement("polyline",{points:pts,fill:"none",stroke:up?"#22c55e":"#ef4444",strokeWidth:"1.5",strokeLinecap:"round",strokeLinejoin:"round"}));
+}
+
+function loadState(){try{const s=localStorage.getItem("arb-port");return s?JSON.parse(s):null}catch(e){return null}}
+function saveState(s){try{localStorage.setItem("arb-port",JSON.stringify(s))}catch(e){}}
+
+function App(){
+  const[mkts,setMkts]=useState([]);
+  const[ld,setLd]=useState(true);
+  const[live,setLive]=useState(false);
+  const[bal,setBal]=useState(10000);
+  const[pos,setPos]=useState([]);
+  const[tds,setTds]=useState([]);
+  const[tab,setTab]=useState("markets");
+  const[cf,setCf]=useState("All");
+  const[q,setQ]=useState("");
+  const[sel,setSel]=useState(null);
+  const[sz,setSz]=useState(100);
+  const[side,setSide]=useState("YES");
+  const[pan,setPan]=useState(false);
+  const[ph,setPh]=useState({});
+
+  useEffect(()=>{const s=loadState();if(s){if(s.b!=null)setBal(s.b);if(s.p)setPos(s.p);if(s.h)setTds(s.h)}},[]);
+  useEffect(()=>{if(!ld)saveState({b:bal,p:pos,h:tds})},[bal,pos,tds,ld]);
+
+  const fetchM=useCallback(async()=>{
+    try{
+      const res=await fetch(GAMMA+"/markets?closed=false&limit=50&order=volume24hr&ascending=false");
+      if(!res.ok)throw new Error(""+res.status);
+      const data=await res.json();
+      const parsed=data.map(m=>{
+        const yp=pp(m);if(!yp||yp<0.02||yp>0.98)return null;
+        const question=m.question||m.description||"";if(!question||question.length<10)return null;
+        return{id:m.conditionId||m.id||m.slug,question:question.slice(0,120),category:cat(m),yes:yp,volume:parseFloat(m.volume24hr||m.volume||0),slug:m.slug||"",url:m.slug?"https://polymarket.com/event/"+m.slug:""};
+      }).filter(Boolean);
+      if(parsed.length>3){setMkts(parsed);setLive(true)}else throw new Error("few");
+    }catch(e){setMkts(FB);setLive(false)}
+    setLd(false);
+  },[]);
+
+  useEffect(()=>{fetchM()},[fetchM]);
+  useEffect(()=>{const i=setInterval(fetchM,30000);return()=>clearInterval(i)},[fetchM]);
+
+  useEffect(()=>{
+    const i=setInterval(()=>{
+      setMkts(prev=>prev.map(m=>{
+        const ny=live?m.yes:rw(m.yes);
+        setPh(p=>({...p,[m.id]:[...(p[m.id]||[]).slice(-39),ny]}));
+        return{...m,yes:ny,volume:live?m.volume:m.volume+Math.floor(Math.random()*2000)};
+      }));
+    },live?30000:4000);
+    return()=>clearInterval(i);
+  },[live]);
+
+  useEffect(()=>{
+    if(mkts.length>0)setPh(prev=>{
+      const n={...prev};
+      mkts.forEach(m=>{if(!n[m.id]||!n[m.id].length){const a=[];let p=m.yes;for(let i=0;i<20;i++){p=rw(p,0.01);a.push(p)}a.push(m.yes);n[m.id]=a}});
+      return n;
+    });
+  },[mkts.length]);
+
+  const cats=["All",...new Set(mkts.map(m=>m.category))];
+  const pv=pos.reduce((s,p)=>{const mk=mkts.find(m=>m.id===p.mid);const cp=mk?(p.s==="YES"?mk.yes:1-mk.yes):p.ap;return s+p.sh*cp},0);
+  const tv=bal+pv;const pnl=tv-10000;
+
+  const doTrade=()=>{
+    if(!sel||sz>bal)return;
+    const mk=mkts.find(m=>m.id===sel.id);if(!mk)return;
+    const price=side==="YES"?mk.yes:1-mk.yes;const shares=sz/price;
+    setBal(b=>b-sz);
+    const ei=pos.findIndex(p=>p.mid===mk.id&&p.s===side);
+    if(ei>=0)setPos(prev=>{const u=[...prev];const e=u[ei];const ts=e.sh+shares;u[ei]={...e,sh:ts,ap:(e.ap*e.sh+price*shares)/ts,c:e.c+sz};return u});
+    else setPos(prev=>[...prev,{mid:mk.id,q:mk.question,s:side,sh:shares,ap:price,c:sz,t:Date.now()}]);
+    setTds(prev=>[{id:Date.now(),mid:mk.id,q:mk.question,s:side,pr:price,sh:shares,c:sz,t:Date.now()},...prev.slice(0,99)]);
+    setPan(false);
+  };
+
+  const closeP=(idx)=>{
+    const p=pos[idx];const mk=mkts.find(m=>m.id===p.mid);if(!mk)return;
+    const cp=p.s==="YES"?mk.yes:1-mk.yes;
+    setBal(b=>b+p.sh*cp);
+    setTds(prev=>[{id:Date.now(),mid:mk.id,q:p.q,s:"CLOSE",pr:cp,sh:p.sh,c:p.sh*cp,t:Date.now()},...prev.slice(0,99)]);
+    setPos(prev=>prev.filter((_,i)=>i!==idx));
+  };
+
+  const reset=()=>{setBal(10000);setPos([]);setTds([]);localStorage.removeItem("arb-port")};
+  const fm=mkts.filter(m=>(cf==="All"||m.category===cf)&&(!q||m.question.toLowerCase().includes(q.toLowerCase())));
+
+  if(ld)return React.createElement("div",{style:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b0e",color:"#555"}},React.createElement("div",{style:{textAlign:"center"}},React.createElement("div",{style:{fontSize:24,marginBottom:8,color:"#f7931a",fontFamily:"'Sora',sans-serif",fontWeight:700}},"S"),React.createElement("div",{style:{fontSize:13}},"Conectando con Polymarket...")));
+
+  return React.createElement("div",{style:{height:"100vh",height:"100dvh",display:"flex",flexDirection:"column",background:"#0a0b0e",color:"#e4e4e7"}},
+
+    // Header
+    React.createElement("header",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0}},
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8}},
+        React.createElement("div",{style:{width:24,height:24,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,background:"linear-gradient(135deg,#f7931a,#ff6b00)"}},"S"),
+        React.createElement("span",{style:{fontSize:14,fontWeight:700,fontFamily:"'Sora',sans-serif"}},"ARB TERMINAL"),
+        React.createElement("span",{style:{fontSize:11,padding:"2px 6px",borderRadius:4,background:"#f7931a22",color:"#f7931a"}},"PAPER"),
+        React.createElement("span",{style:{fontSize:11,padding:"2px 6px",borderRadius:4,background:live?"#22c55e22":"#f59e0b22",color:live?"#22c55e":"#f59e0b"}},live?"LIVE":"SIM"),
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:12}},
+        React.createElement("div",{style:{textAlign:"right"}},
+          React.createElement("div",{style:{color:"#444",fontSize:10}},"Total"),
+          React.createElement("div",{className:"mono",style:{fontSize:13,fontWeight:700}},fu(tv)),
+        ),
+        React.createElement("div",{style:{textAlign:"right"}},
+          React.createElement("div",{style:{color:"#444",fontSize:10}},"P&L"),
+          React.createElement("div",{className:"mono",style:{fontSize:13,fontWeight:700,color:pnl>=0?"#4ade80":"#f87171"}},(pnl>=0?"+":"")+fu(pnl)),
+        ),
+      ),
+    ),
+
+    // Tabs
+    React.createElement("div",{style:{display:"flex",gap:12,padding:"6px 12px 0",borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0}},
+      [{k:"markets",l:"Mercados"},{k:"positions",l:"Posiciones"},{k:"history",l:"Historial"}].map(t=>
+        React.createElement("button",{key:t.k,onClick:()=>setTab(t.k),style:{paddingBottom:6,fontSize:12,fontWeight:500,color:tab===t.k?"#f7931a":"#555",borderBottom:tab===t.k?"2px solid #f7931a":"2px solid transparent",background:"none",border:"none",cursor:"pointer",borderBottomStyle:"solid"}},t.l)
+      ),
+    ),
+
+    // Markets tab
+    tab==="markets"&&React.createElement("div",{style:{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}},
+      // Filters
+      React.createElement("div",{className:"hsb",style:{display:"flex",gap:6,padding:"8px 12px",overflowX:"auto",flexShrink:0}},
+        cats.map(c=>React.createElement("button",{key:c,onClick:()=>setCf(c),style:{padding:"4px 10px",borderRadius:20,fontSize:11,whiteSpace:"nowrap",background:cf===c?"#f7931a22":"transparent",border:"1px solid "+(cf===c?"#f7931a44":"rgba(255,255,255,0.06)"),color:cf===c?"#f7931a":"#555",cursor:"pointer"}},c)),
+        React.createElement("input",{type:"text",placeholder:"Buscar...",value:q,onChange:e=>setQ(e.target.value),style:{marginLeft:4,padding:"4px 10px",borderRadius:20,fontSize:11,outline:"none",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:"#e4e4e7",width:120}}),
+      ),
+      // List
+      React.createElement("div",{className:"hsb",style:{flex:1,overflowY:"auto"}},
+        fm.map(m=>{
+          const h=ph[m.id]||[];const ch=h.length>1?((m.yes-h[0])/h[0])*100:0;
+          return React.createElement("div",{key:m.id,className:"rh",style:{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,0.02)",cursor:"pointer"},onClick:()=>{setSel(m);setPan(true)}},
+            React.createElement("div",{style:{flex:1,minWidth:0}},
+              React.createElement("div",{style:{fontSize:12,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},m.question),
+              React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginTop:2}},
+                React.createElement("span",{style:{background:"rgba(255,255,255,0.04)",color:"#777",fontSize:10,padding:"1px 4px",borderRadius:3}},m.category),
+                React.createElement("span",{style:{color:"#444",fontSize:10}},"Vol "+fv(m.volume)),
+              ),
+            ),
+            React.createElement(Spark,{data:h}),
+            React.createElement("div",{style:{textAlign:"right",width:56,flexShrink:0}},
+              React.createElement("div",{className:"mono",style:{fontSize:14,fontWeight:700,color:"#f7931a"}},(m.yes*100).toFixed(1)+"%"),
+              React.createElement("div",{className:"mono",style:{fontSize:10,color:ch>=0?"#4ade80":"#f87171"}},(ch>=0?"+":"")+ch.toFixed(1)+"%"),
+            ),
+            React.createElement("button",{style:{flexShrink:0,padding:"4px 10px",borderRadius:8,fontSize:11,fontWeight:600,background:"linear-gradient(135deg,#f7931a,#ff6b00)",color:"#000",border:"none",cursor:"pointer"},onClick:e=>{e.stopPropagation();setSel(m);setPan(true)}},"Trade"),
+          );
+        }),
+      ),
+    ),
+
+    // Positions tab
+    tab==="positions"&&React.createElement("div",{className:"hsb",style:{flex:1,overflowY:"auto"}},
+      pos.length===0?
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"64px 0",color:"#444"}},
+          React.createElement("div",{style:{fontSize:32,marginBottom:8}},"📊"),
+          React.createElement("div",{style:{fontSize:13}},"Sin posiciones abiertas"),
+          React.createElement("div",{style:{fontSize:11,marginTop:4}},"Opera en Mercados para empezar"),
+        )
+      :React.createElement(React.Fragment,null,
+        React.createElement("div",{style:{padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,0.04)"}},
+          React.createElement("span",{style:{fontSize:11,color:"#555"}},React.createElement("span",null,"Balance: "),React.createElement("span",{className:"mono"},fu(bal))),
+          React.createElement("button",{onClick:reset,style:{fontSize:11,padding:"3px 8px",borderRadius:4,color:"#ef4444",background:"#ef444412",border:"none",cursor:"pointer"}},"Reset"),
+        ),
+        pos.map((p,i)=>{
+          const mk=mkts.find(m=>m.id===p.mid);const cp=mk?(p.s==="YES"?mk.yes:1-mk.yes):p.ap;const v=p.sh*cp;const pl=v-p.c;const plp=(pl/p.c)*100;
+          return React.createElement("div",{key:p.mid+p.s,className:"rh",style:{padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,0.02)"}},
+            React.createElement("div",{style:{fontSize:12,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}},p.q),
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+              React.createElement("span",{style:{fontSize:11,padding:"2px 6px",borderRadius:4,fontWeight:600,background:p.s==="YES"?"#22c55e18":"#ef444418",color:p.s==="YES"?"#22c55e":"#ef4444"}},p.s),
+              React.createElement("span",{className:"mono",style:{fontSize:11,color:"#555"}},p.sh.toFixed(1)+" @ "+fu(p.ap)),
+            ),
+            React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between"}},
+              React.createElement("div",{style:{display:"flex",gap:12}},
+                React.createElement("div",null,React.createElement("div",{style:{color:"#444",fontSize:10}},"Coste"),React.createElement("div",{className:"mono",style:{fontSize:12}},fu(p.c))),
+                React.createElement("div",null,React.createElement("div",{style:{color:"#444",fontSize:10}},"Valor"),React.createElement("div",{className:"mono",style:{fontSize:12}},fu(v))),
+                React.createElement("div",null,React.createElement("div",{style:{color:"#444",fontSize:10}},"P&L"),React.createElement("div",{className:"mono",style:{fontSize:12,fontWeight:700,color:pl>=0?"#4ade80":"#f87171"}},(pl>=0?"+":"")+fu(pl))),
+              ),
+              React.createElement("button",{onClick:()=>closeP(i),style:{padding:"4px 10px",borderRadius:8,fontSize:11,fontWeight:600,background:"#ef444418",border:"1px solid #ef444433",color:"#ef4444",cursor:"pointer"}},"Cerrar"),
+            ),
+          );
+        }),
+      ),
+    ),
+
+    // History tab
+    tab==="history"&&React.createElement("div",{className:"hsb",style:{flex:1,overflowY:"auto"}},
+      tds.length===0?
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"64px 0",color:"#444"}},
+          React.createElement("div",{style:{fontSize:32,marginBottom:8}},"📝"),
+          React.createElement("div",{style:{fontSize:13}},"Sin trades"),
+        )
+      :tds.map(t=>
+        React.createElement("div",{key:t.id,className:"rh",style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,0.02)"}},
+          React.createElement("div",{style:{flex:1,minWidth:0}},
+            React.createElement("div",{style:{fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},t.q),
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginTop:2}},
+              React.createElement("span",{style:{fontSize:11,padding:"1px 4px",borderRadius:4,fontWeight:600,background:t.s==="YES"?"#22c55e18":t.s==="CLOSE"?"#6366f118":"#ef444418",color:t.s==="YES"?"#22c55e":t.s==="CLOSE"?"#818cf8":"#ef4444"}},t.s),
+              React.createElement("span",{className:"mono",style:{color:"#444",fontSize:10}},new Date(t.t).toLocaleTimeString()),
+            ),
+          ),
+          React.createElement("div",{style:{textAlign:"right",flexShrink:0}},
+            React.createElement("div",{className:"mono",style:{fontSize:12}},fu(t.c)),
+            React.createElement("div",{className:"mono",style:{color:"#555",fontSize:10}},t.sh.toFixed(1)+" @ "+fu(t.pr)),
+          ),
+        ),
+      ),
+    ),
+
+    // Trade Panel
+    pan&&sel&&React.createElement("div",{style:{position:"fixed",inset:0,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.6)",zIndex:50},onClick:()=>setPan(false)},
+      React.createElement("div",{className:"fade-in",style:{width:"100%",maxWidth:480,borderRadius:"16px 16px 0 0",padding:16,background:"#14161b",border:"1px solid rgba(255,255,255,0.08)"},onClick:e=>e.stopPropagation()},
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}},
+          React.createElement("div",{style:{flex:1,minWidth:0}},
+            React.createElement("div",{style:{fontSize:14,fontWeight:700}},sel.question),
+            React.createElement("div",{style:{fontSize:11,marginTop:2,color:"#555"}},sel.category+" | Vol "+fv(sel.volume),
+              sel.url?React.createElement("span",null," | ",React.createElement("a",{href:sel.url,target:"_blank",rel:"noopener noreferrer",style:{color:"#f7931a",textDecoration:"none"}},"Polymarket")):null),
+          ),
+          React.createElement("button",{onClick:()=>setPan(false),style:{color:"#555",fontSize:18,background:"none",border:"none",cursor:"pointer"}},"x"),
+        ),
+        // YES/NO
+        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}},
+          ["YES","NO"].map(s=>{
+            const pr=s==="YES"?sel.yes:1-sel.yes;const ac=side===s;const co=s==="YES"?"#22c55e":"#ef4444";
+            return React.createElement("div",{key:s,style:{padding:12,borderRadius:12,cursor:"pointer",transition:"all .15s",background:ac?co+"12":"rgba(255,255,255,0.02)",border:"1.5px solid "+(ac?co+"44":"rgba(255,255,255,0.06)")},onClick:()=>setSide(s)},
+              React.createElement("div",{style:{fontSize:11,fontWeight:600,marginBottom:4,color:ac?co:"#555"}},s),
+              React.createElement("div",{className:"mono",style:{fontSize:20,fontWeight:700,color:co}},(pr*100).toFixed(1)+"%"),
+              React.createElement("div",{className:"mono",style:{fontSize:11,color:"#555"}},fu(pr)+"/share"),
+            );
+          }),
+        ),
+        // Size
+        React.createElement("div",{style:{display:"flex",gap:6,marginBottom:12}},
+          [50,100,250,500,1000].map(a=>React.createElement("button",{key:a,onClick:()=>setSz(a),className:"mono",style:{flex:1,padding:"6px 0",borderRadius:8,fontSize:11,fontWeight:600,background:sz===a?"#f7931a22":"rgba(255,255,255,0.03)",border:"1px solid "+(sz===a?"#f7931a44":"rgba(255,255,255,0.05)"),color:sz===a?"#f7931a":"#555",cursor:"pointer"}},"$"+a)),
+        ),
+        // Summary
+        React.createElement("div",{style:{padding:10,borderRadius:12,marginBottom:12,background:"rgba(255,255,255,0.02)"}},
+          (()=>{const pr=side==="YES"?sel.yes:1-sel.yes;const sh=sz/pr;const pf=sh-sz;return React.createElement(React.Fragment,null,
+            React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:2}},React.createElement("span",{style:{color:"#555"}},"Shares"),React.createElement("span",{className:"mono"},sh.toFixed(2))),
+            React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:2}},React.createElement("span",{style:{color:"#555"}},"Precio"),React.createElement("span",{className:"mono"},fu(pr))),
+            React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:2}},React.createElement("span",{style:{color:"#555"}},"Pago si ganas"),React.createElement("span",{className:"mono",style:{color:"#4ade80"}},fu(sh))),
+            React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12}},React.createElement("span",{style:{color:"#555"}},"Profit potencial"),React.createElement("span",{className:"mono",style:{color:"#4ade80"}},"+"+fu(pf)+" (+"+((pf/sz)*100).toFixed(0)+"%)")),
+          )})(),
+        ),
+        // Button
+        React.createElement("button",{onClick:doTrade,disabled:sz>bal,style:{width:"100%",padding:"10px 0",borderRadius:12,fontSize:14,fontWeight:700,background:sz>bal?"#333":"linear-gradient(135deg,#f7931a,#ff6b00)",color:sz>bal?"#666":"#000",border:"none",cursor:sz>bal?"not-allowed":"pointer",opacity:sz>bal?0.4:1}},sz>bal?"Balance insuficiente":"Comprar "+side+" por "+fu(sz)),
+        React.createElement("div",{style:{textAlign:"center",marginTop:6}},React.createElement("span",{style:{color:"#333",fontSize:10}},"Paper trading - sin dinero real")),
+      ),
+    ),
+  );
+}
+
+ReactDOM.render(React.createElement(App),document.getElementById("root"));
+</script>
+</body>
+</html>
